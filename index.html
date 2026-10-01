@@ -1,0 +1,571 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+  <title>QAZGUIDE — Алматы</title>
+
+  <link
+    rel="stylesheet"
+    href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+  >
+
+  <style>
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      font-family: Arial, sans-serif;
+      background: #f5f6f8;
+    }
+
+    header {
+      height: 64px;
+      background: white;
+      display: flex;
+      align-items: center;
+      gap: 15px;
+      padding: 0 18px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.12);
+      position: relative;
+      z-index: 1000;
+    }
+
+    .logo {
+      font-size: 24px;
+      font-weight: 800;
+      white-space: nowrap;
+      color: #111;
+    }
+
+    .logo span {
+      color: #1683ff;
+    }
+
+    #search {
+      flex: 1;
+      max-width: 650px;
+      padding: 12px 16px;
+      border: 1px solid #ddd;
+      border-radius: 12px;
+      font-size: 15px;
+      outline: none;
+    }
+
+    #search:focus {
+      border-color: #1683ff;
+    }
+
+    #map {
+      width: 100%;
+      height: calc(100vh - 64px);
+    }
+
+    #status {
+      position: absolute;
+      top: 78px;
+      left: 15px;
+      z-index: 999;
+      background: white;
+      padding: 10px 14px;
+      border-radius: 10px;
+      box-shadow: 0 2px 10px rgba(0,0,0,0.15);
+      font-size: 14px;
+    }
+
+    .place-card {
+      width: 250px;
+    }
+
+    .place-card img {
+      width: 100%;
+      max-height: 150px;
+      object-fit: cover;
+      border-radius: 8px;
+      margin-bottom: 8px;
+    }
+
+    .place-card h3 {
+      margin: 0 0 8px;
+      font-size: 18px;
+    }
+
+    .place-card p {
+      margin: 6px 0;
+      font-size: 13px;
+      color: #555;
+      line-height: 1.4;
+    }
+
+    .error-box {
+      position: fixed;
+      top: 80px;
+      right: 15px;
+      z-index: 2000;
+      background: #fff;
+      border-left: 5px solid #e53935;
+      padding: 15px;
+      max-width: 400px;
+      border-radius: 10px;
+      box-shadow: 0 3px 15px rgba(0,0,0,0.2);
+      display: none;
+    }
+
+    @media (max-width: 600px) {
+
+      header {
+        height: 58px;
+        padding: 0 10px;
+        gap: 8px;
+      }
+
+      .logo {
+        font-size: 19px;
+      }
+
+      #search {
+        font-size: 13px;
+        padding: 10px;
+      }
+
+      #map {
+        height: calc(100vh - 58px);
+      }
+
+      #status {
+        top: 68px;
+        font-size: 12px;
+      }
+    }
+  </style>
+</head>
+
+<body>
+
+<header>
+
+  <div class="logo">
+    QAZ<span>GUIDE</span>
+  </div>
+
+  <input
+    id="search"
+    type="text"
+    placeholder="🔎 Найти место..."
+  >
+
+</header>
+
+<div id="status">
+  Загрузка мест...
+</div>
+
+<div id="errorBox" class="error-box"></div>
+
+<div id="map"></div>
+
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+
+
+<script>
+
+  /* =========================================
+     SUPABASE
+  ========================================= */
+
+  const SUPABASE_URL =
+    "https://qlpsgdekpspbntbnseeb.supabase.co";
+
+  const SUPABASE_KEY =
+    "sb_publishable_P6NkIlebu7a4W4zETBKhzQ_NGF2DTI9";
+
+  const supabaseClient =
+    supabase.createClient(
+      SUPABASE_URL,
+      SUPABASE_KEY
+    );
+
+
+  /* =========================================
+     MAP
+  ========================================= */
+
+  const map = L.map("map").setView(
+    [43.2389, 76.8897],
+    11
+  );
+
+
+  L.tileLayer(
+    "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
+    {
+      attribution:
+        "&copy; OpenStreetMap contributors"
+    }
+  ).addTo(map);
+
+
+  /* =========================================
+     VARIABLES
+  ========================================= */
+
+  let allPlaces = [];
+  let markers = [];
+
+
+  /* =========================================
+     LOAD PLACES
+  ========================================= */
+
+  async function loadPlaces() {
+
+    const status =
+      document.getElementById("status");
+
+    const errorBox =
+      document.getElementById("errorBox");
+
+    status.textContent =
+      "⏳ Загружаем 2250 мест...";
+
+    errorBox.style.display = "none";
+
+
+    try {
+
+      const { data, error } =
+        await supabaseClient
+          .from("places")
+          .select(`
+            id,
+            name,
+            description,
+            category,
+            city,
+            region,
+            latitude,
+            longitude,
+            image_url,
+            rating,
+            address,
+            phone,
+            website,
+            opening_hours
+          `)
+          .not("latitude", "is", null)
+          .not("longitude", "is", null)
+          .range(0, 4999);
+
+
+      if (error) {
+
+        console.error(
+          "Supabase error:",
+          error
+        );
+
+        status.textContent =
+          "❌ Ошибка загрузки";
+
+        errorBox.innerHTML =
+          "<b>Ошибка Supabase:</b><br>" +
+          escapeHtml(error.message);
+
+        errorBox.style.display =
+          "block";
+
+        return;
+      }
+
+
+      allPlaces = data || [];
+
+
+      status.textContent =
+        "📍 Загружено мест: " +
+        allPlaces.length;
+
+
+      showPlaces(allPlaces);
+
+
+    } catch (error) {
+
+      console.error(error);
+
+      status.textContent =
+        "❌ Ошибка";
+
+      errorBox.innerHTML =
+        "<b>Ошибка сайта:</b><br>" +
+        escapeHtml(error.message);
+
+      errorBox.style.display =
+        "block";
+    }
+  }
+
+
+  /* =========================================
+     SHOW MARKERS
+  ========================================= */
+
+  function showPlaces(places) {
+
+
+    markers.forEach(
+      marker => map.removeLayer(marker)
+    );
+
+    markers = [];
+
+
+    places.forEach(place => {
+
+      const lat =
+        Number(place.latitude);
+
+      const lon =
+        Number(place.longitude);
+
+
+      if (
+        !Number.isFinite(lat) ||
+        !Number.isFinite(lon)
+      ) {
+        return;
+      }
+
+
+      const marker =
+        L.marker([lat, lon]);
+
+
+      let html =
+        `<div class="place-card">`;
+
+
+      if (place.image_url) {
+
+        html += `
+          <img
+            src="${escapeHtml(place.image_url)}"
+            alt="${escapeHtml(
+              place.name || ""
+            )}"
+          >
+        `;
+      }
+
+
+      html += `
+        <h3>
+          ${escapeHtml(
+            place.name || "Без названия"
+          )}
+        </h3>
+      `;
+
+
+      if (place.category) {
+
+        html += `
+          <p>
+            🏷️ <b>Категория:</b>
+            ${escapeHtml(place.category)}
+          </p>
+        `;
+      }
+
+
+      if (place.address) {
+
+        html += `
+          <p>
+            📍 ${escapeHtml(place.address)}
+          </p>
+        `;
+      }
+
+
+      if (place.description) {
+
+        html += `
+          <p>
+            ${escapeHtml(place.description)}
+          </p>
+        `;
+      }
+
+
+      if (place.rating) {
+
+        html += `
+          <p>
+            ⭐ ${escapeHtml(place.rating)}
+          </p>
+        `;
+      }
+
+
+      if (place.phone) {
+
+        html += `
+          <p>
+            📞 ${escapeHtml(place.phone)}
+          </p>
+        `;
+      }
+
+
+      if (place.opening_hours) {
+
+        html += `
+          <p>
+            🕒 ${escapeHtml(
+              place.opening_hours
+            )}
+          </p>
+        `;
+      }
+
+
+      if (place.website) {
+
+        html += `
+          <p>
+            🌐 ${escapeHtml(place.website)}
+          </p>
+        `;
+      }
+
+
+      html += `</div>`;
+
+
+      marker.bindPopup(html);
+
+      marker.addTo(map);
+
+      markers.push(marker);
+
+    });
+  }
+
+
+  /* =========================================
+     SEARCH
+  ========================================= */
+
+  document
+    .getElementById("search")
+    .addEventListener(
+      "input",
+      function () {
+
+        const query =
+          this.value
+            .toLowerCase()
+            .trim();
+
+
+        if (!query) {
+
+          showPlaces(allPlaces);
+
+          document
+            .getElementById("status")
+            .textContent =
+            "📍 Загружено мест: " +
+            allPlaces.length;
+
+          return;
+        }
+
+
+        const filtered =
+          allPlaces.filter(place => {
+
+            const text = [
+
+              place.name,
+              place.description,
+              place.category,
+              place.city,
+              place.region,
+              place.address
+
+            ]
+              .filter(Boolean)
+              .join(" ")
+              .toLowerCase();
+
+
+            return text.includes(query);
+
+          });
+
+
+        showPlaces(filtered);
+
+
+        document
+          .getElementById("status")
+          .textContent =
+          "🔎 Найдено: " +
+          filtered.length;
+      }
+    );
+
+
+  /* =========================================
+     SECURITY / HTML ESCAPE
+  ========================================= */
+
+  function escapeHtml(value) {
+
+    return String(value)
+
+      .replace(
+        /&/g,
+        "&amp;"
+      )
+
+      .replace(
+        /</g,
+        "&lt;"
+      )
+
+      .replace(
+        />/g,
+        "&gt;"
+      )
+
+      .replace(
+        /"/g,
+        "&quot;"
+      )
+
+      .replace(
+        /'/g,
+        "&#039;"
+      );
+  }
+
+
+  /* =========================================
+     START
+  ========================================= */
+
+  loadPlaces();
+
+</script>
+
+</body>
+</html>
